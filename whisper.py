@@ -2,7 +2,7 @@
 from sudoku import Board, GermanWhisper
 
 try:
-    board = Board()
+    board = Board(do_terminal=True)
 
     GermanWhisper(
         board,
@@ -45,4 +45,5 @@ try:
     board[8, 8] = 3
     board[9, 5] = 3
 finally:
-    print(board)
+    pass
+    # print(board)

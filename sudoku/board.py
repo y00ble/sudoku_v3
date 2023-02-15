@@ -1,5 +1,7 @@
 import collections
+import blessed
 import itertools
+import time
 
 import numpy as np
 
@@ -7,11 +9,17 @@ from .constraints import DIGITS, Row, Column, Box
 from .exceptions import SudokuContradiction
 
 MAX_COVEREE_SIZE = 9
+WINDOW_WIDTH = 9 * 9 + 6 + 2 * 3
+WINDOW_HEIGHT = 9 + 2
 
 
 class Board:
 
-    def __init__(self):
+    def __init__(self, do_terminal=False):
+        self.term = None
+        if do_terminal:
+            self.term = blessed.Terminal()
+
         self.possibles = np.ones(9 * 9 * 9 + 1).astype(bool)
         self.possibles[-1] = False
         self.finalised = np.zeros(9 * 9 * 9).astype(bool)
@@ -29,7 +37,8 @@ class Board:
 
         for row in DIGITS:
             for col in DIGITS:
-                indices = [self._possible_index(row, col, j) for j in DIGITS]
+                indices = [self._possible_index(
+                    row, col, j) for j in DIGITS]
                 self._register_coveree(indices)
 
                 for d1, d2 in itertools.product(DIGITS, repeat=2):
@@ -54,10 +63,9 @@ class Board:
 
         row, column = key
 
-        for digit in DIGITS:
-            index = self._possible_index(row, column, digit)
-            if digit not in value:
-                self._remove_possibles(index)
+        indices = [self._possible_index(
+            row, column, digit) for digit in DIGITS if digit not in value]
+        self._remove_possibles(indices)
 
     def __str__(self):
         output = ""
@@ -87,6 +95,16 @@ class Board:
         self.finalised[indices] = True
         if to_remove:
             self._remove_possibles(to_remove)
+
+        self.refresh_screen()
+
+    def refresh_screen(self):
+        if self.term is None:
+            return
+        with self.term.location(0, 0):
+            print(self.term.clear())
+            print(self)
+            time.sleep(0.1)
 
     @staticmethod
     def _cell_start_index(row, col):
