@@ -1,6 +1,7 @@
 import collections
-import blessed
+import curses
 import itertools
+import random
 import time
 
 import numpy as np
@@ -9,23 +10,24 @@ from .constraints import DIGITS, Row, Column, Box
 from .exceptions import SudokuContradiction
 
 MAX_COVEREE_SIZE = 9
-WINDOW_WIDTH = 9 * 9 + 6 + 2 * 3
+
+WINDOW_WIDTH = 9 * 9 + 6 + 2 * 3 + 1
 WINDOW_HEIGHT = 9 + 2
+FRAME_RATE = 1
 
 
 class Board:
 
-    def __init__(self, do_terminal=False):
-        self.term = None
-        if do_terminal:
-            self.term = blessed.Terminal()
-
+    def __init__(self):
         self.possibles = np.ones(9 * 9 * 9 + 1).astype(bool)
         self.possibles[-1] = False
         self.finalised = np.zeros(9 * 9 * 9).astype(bool)
         self.contradictions = collections.defaultdict(list)
         self.coveree_index = collections.defaultdict(list)
         self._coverees = []
+        self.solving = False
+        self.screen = None
+        self.last_frame_time = 0
 
         for i in DIGITS:
             for constraint_cls in [Row, Column, Box]:
@@ -37,8 +39,7 @@ class Board:
 
         for row in DIGITS:
             for col in DIGITS:
-                indices = [self._possible_index(
-                    row, col, j) for j in DIGITS]
+                indices = [self._possible_index(row, col, j) for j in DIGITS]
                 self._register_coveree(indices)
 
                 for d1, d2 in itertools.product(DIGITS, repeat=2):
@@ -63,9 +64,10 @@ class Board:
 
         row, column = key
 
-        indices = [self._possible_index(
-            row, column, digit) for digit in DIGITS if digit not in value]
-        self._remove_possibles(indices)
+        for digit in DIGITS:
+            index = self._possible_index(row, column, digit)
+            if digit not in value:
+                self._remove_possibles(index)
 
     def __str__(self):
         output = ""
@@ -85,6 +87,12 @@ class Board:
 
         return output
 
+    def solve(self, with_terminal=False):
+        if with_terminal:
+            self._init_screen()
+        self.solving = True
+        self.finalise(self.get_singleton_coverees())
+
     def finalise(self, indices):
         to_remove = []
         for index in indices:
@@ -96,15 +104,23 @@ class Board:
         if to_remove:
             self._remove_possibles(to_remove)
 
-        self.refresh_screen()
+        self._refresh_screen()
 
-    def refresh_screen(self):
-        if self.term is None:
+    def _init_screen(self):
+        curses.initscr()
+        self.screen = curses.newwin(WINDOW_HEIGHT, WINDOW_WIDTH, 0, 0)
+
+    def _refresh_screen(self):
+        if self.screen is None:
             return
-        with self.term.location(0, 0):
-            print(self.term.clear())
-            print(self)
-            time.sleep(0.1)
+        if time.time() - self.last_frame_time < 1 / FRAME_RATE:
+            return
+        self.last_frame_time = time.time()
+
+        self.screen.erase()
+        for i, line in enumerate(str(self).splitlines()):
+            self.screen.addstr(i, 0, line)
+        self.screen.refresh()
 
     @staticmethod
     def _cell_start_index(row, col):
@@ -135,7 +151,8 @@ class Board:
 
     def _remove_possibles(self, indices):
         self.possibles[indices] = False
-
+        if not self.solving:
+            return
         self.finalise(self.get_singleton_coverees())
 
     def get_singleton_coverees(self):

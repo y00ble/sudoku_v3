@@ -13,13 +13,15 @@ givens = [
     [0, 6, 0, 2, 0, 0, 0, 9, 0],
 ]
 
+for i, digits in enumerate(givens):
+    for j, digit in enumerate(digits):
+        if digit != 0:
+            row = i + 1
+            column = j + 1
+            board[row, column] = digit
+
 try:
-    for i, digits in enumerate(givens):
-        for j, digit in enumerate(digits):
-            if digit != 0:
-                row = i + 1
-                column = j + 1
-                board[row, column] = digit
+    board.solve(with_terminal=True)
 finally:
     print(board)
 # try:
