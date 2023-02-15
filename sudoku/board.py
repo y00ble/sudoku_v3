@@ -15,6 +15,9 @@ WINDOW_WIDTH = 9 * 9 + 6 + 2 * 3 + 1
 WINDOW_HEIGHT = 9 + 2
 FRAME_RATE = 1
 
+Bifurcation = collections.namedtuple(
+    "Bifurcation", "index possibles finalised")
+
 
 class Board:
 
@@ -28,6 +31,7 @@ class Board:
         self.solving = False
         self.screen = None
         self.last_frame_time = 0
+        self.bifurcations = []
 
         for i in DIGITS:
             for constraint_cls in [Row, Column, Box]:
@@ -91,7 +95,21 @@ class Board:
         if with_terminal:
             self._init_screen()
         self.solving = True
+
         self.finalise(self.get_singleton_coverees())
+        to_remove = None
+        while not np.all(self.finalised):
+            try:
+                if to_remove is not None:
+                    self._remove_possibles([to_remove])
+                    to_remove = None
+                else:
+                    self._do_bifurcation()
+            except SudokuContradiction:
+                self._refresh_screen()
+                failed_bifurcation = self.bifurcations.pop()
+                self._rewind_bifurcation(failed_bifurcation)
+                to_remove = failed_bifurcation.index
 
     def finalise(self, indices):
         to_remove = []
@@ -106,8 +124,22 @@ class Board:
 
         self._refresh_screen()
 
+    def _do_bifurcation(self):
+        index = self._select_bifurcation_index()
+        self.bifurcations.append(Bifurcation(
+            index, np.copy(self.possibles), np.copy(self.finalised)))
+        self.finalise([index])
+
+    def _select_bifurcation_index(self):
+        return min(np.where(self.possibles[:-1] & ~self.finalised)[0])
+
+    def _rewind_bifurcation(self, bifurcation):
+        self.possibles = bifurcation.possibles
+        self.finalised = bifurcation.finalised
+
     def _init_screen(self):
         curses.initscr()
+        curses.start_color()
         self.screen = curses.newwin(WINDOW_HEIGHT, WINDOW_WIDTH, 0, 0)
 
     def _refresh_screen(self):
@@ -120,32 +152,43 @@ class Board:
         self.screen.erase()
         for i, line in enumerate(str(self).splitlines()):
             self.screen.addstr(i, 0, line)
+
+        for bifurcation in self.bifurcations:
+            # TODO pull out into another function
+            index = bifurcation.index
+            row = index // 81
+            line_number = row + row // 3
+            column = index // 9 % 9
+            cursor_column = 10 * column + 2 * (column // 3)
+            digit = index % 9
+            self.screen.addstr(line_number, cursor_column, f"{digit}*")
+
         self.screen.refresh()
 
-    @staticmethod
+    @ staticmethod
     def _cell_start_index(row, col):
         return (row - 1) * 81 + (col - 1) * 9
 
-    @staticmethod
+    @ staticmethod
     def _possible_index(row, col, possible):
         return Board._cell_start_index(row, col) + (possible - 1)
 
-    @staticmethod
+    @ staticmethod
     def _possible_index_to_cell_index(index):
         return index // 9
 
-    @staticmethod
+    @ staticmethod
     def _possible_index_to_digit(index):
         return index % 9 + 1
 
-    @staticmethod
+    @ staticmethod
     def _describe_cell_index(index):
         return f"R{index // 9 + 1}C{index % 9 + 1}"
 
     def _min_possible_index(self, cell_index):
         cell_start_index = cell_index * 9
         cell_possibles = self.possibles[
-            cell_start_index:cell_start_index+9
+            cell_start_index: cell_start_index+9
         ]
         return cell_start_index + min([i for i, possible in enumerate(cell_possibles) if possible])
 
