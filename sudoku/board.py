@@ -176,6 +176,7 @@ class Board:
             column = index // 9 % 9
             cursor_column = 10 * column + 2 * (column // 3)
             digit = index % 9
+            # TODO more colors (probably highlight non-bifurcated stuff)
             self.screen.addstr(line_number, cursor_column,
                                str(digit), curses.color_pair(1))
 
