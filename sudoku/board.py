@@ -1,20 +1,23 @@
 import collections
-import inspect
+import itertools
 
 import numpy as np
-import pandas as pd
 
-from .constraints import DIGITS, Row, Column, Box, GivenDigit
+from .constraints import DIGITS, Row, Column, Box
 from .exceptions import SudokuContradiction
+
+MAX_COVEREE_SIZE = 9
 
 
 class Board:
 
     def __init__(self):
-        self.possibles = np.ones(9 * 9 * 9).astype(bool)
+        self.possibles = np.ones(9 * 9 * 9 + 1).astype(bool)
+        self.possibles[-1] = False
+        self.finalised = np.zeros(9 * 9 * 9).astype(bool)
         self.contradictions = collections.defaultdict(list)
         self.coveree_index = collections.defaultdict(list)
-        self.coverees = []
+        self._coverees = []
 
         for i in DIGITS:
             for constraint_cls in [Row, Column, Box]:
@@ -24,10 +27,26 @@ class Board:
                         *cell, j) for cell in constraint.cells]
                     self._register_coveree(indices)
 
-        self.coveree_counts = np.array(
-            [len(coveree) for coveree in self.coverees])
+        for row in DIGITS:
+            for col in DIGITS:
+                indices = [self._possible_index(row, col, j) for j in DIGITS]
+                self._register_coveree(indices)
 
-        self.cell_possibles = (np.ones(81) * 0b111111111).astype(int)
+                for d1, d2 in itertools.product(DIGITS, repeat=2):
+                    if d1 == d2:
+                        continue
+
+                    i1 = self._possible_index(row, col, d1)
+                    i2 = self._possible_index(row, col, d2)
+                    self.contradictions[i1].append(i2)
+                    self.contradictions[i2].append(i1)
+
+        self.coverees = []
+        for coveree in self._coverees:
+            self.coverees.append(
+                coveree + [-1] * (MAX_COVEREE_SIZE - len(coveree)))
+
+        self.coverees = np.array(self.coverees)
 
     def __setitem__(self, key, value):
         if not isinstance(value, collections.abc.Iterable):
@@ -38,7 +57,7 @@ class Board:
         for digit in DIGITS:
             index = self._possible_index(row, column, digit)
             if digit not in value:
-                self._remove_possible(index)
+                self._remove_possibles(index)
 
     def __str__(self):
         output = ""
@@ -58,9 +77,16 @@ class Board:
 
         return output
 
-    def finalise(self, index):
-        for contradictory_index in self.contradictions[index]:
-            self._remove_possible(contradictory_index)
+    def finalise(self, indices):
+        to_remove = []
+        for index in indices:
+            if self.finalised[index]:
+                continue
+            to_remove.extend(self.contradictions[index])
+
+        self.finalised[indices] = True
+        if to_remove:
+            self._remove_possibles(to_remove)
 
     @staticmethod
     def _cell_start_index(row, col):
@@ -89,30 +115,27 @@ class Board:
         ]
         return cell_start_index + min([i for i, possible in enumerate(cell_possibles) if possible])
 
-    def _remove_possible(self, index):
-        # TODO vectorise this
-        if not self.possibles[index]:
-            return
+    def _remove_possibles(self, indices):
+        self.possibles[indices] = False
 
-        cell_index = self._possible_index_to_cell_index(index)
-        digit = self._possible_index_to_digit(index)
-        self.possibles[index] = False
-        self.cell_possibles[cell_index] = self.cell_possibles[cell_index] & (0b111111111 -
-                                                                             (1 << (digit - 1)))
-        if self.cell_possibles[cell_index] == 0:
-            raise SudokuContradiction("No possibles remaing in {}".format(
-                self._describe_cell_index(cell_index)
-            ))
-        elif self.cell_possibles[cell_index] & (self.cell_possibles[cell_index] - 1) == 0:
-            self.finalise(cell_index * 9 +
-                          int(np.log2(self.cell_possibles[cell_index])))
-        coverees = self.coveree_index[index]
-        self.coveree_counts[coverees] -= 1
+        self.finalise(self.get_singleton_coverees())
 
-        # TODO finalise based on coverees
+    def get_singleton_coverees(self):
+        coveree_status = self.possibles[self.coverees]
+        coveree_counts = coveree_status.sum(axis=1)
+        singleton_coverees_idx = (coveree_counts == 1)
+        if np.any(coveree_counts == 0):
+            raise SudokuContradiction(
+                "At least one coveree cannot be covered!")
+        singleton_coverees = (self.coverees[singleton_coverees_idx] *
+                              coveree_status[singleton_coverees_idx]).sum(axis=1)
+        return singleton_coverees
 
     def _register_coveree(self, cell_indices):
-        index = len(self.coverees)
-        self.coverees.append(cell_indices)
+        if len(cell_indices) > MAX_COVEREE_SIZE:
+            raise ValueError(
+                "Coveree is too large! Max coveree size is {}".format(MAX_COVEREE_SIZE))
+        index = len(self._coverees)
+        self._coverees.append(cell_indices)
         for cell in cell_indices:
             self.coveree_index[cell].append(index)

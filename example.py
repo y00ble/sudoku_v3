@@ -1,4 +1,4 @@
-from .board import Board
+from sudoku.board import Board
 
 board = Board()
 givens = [

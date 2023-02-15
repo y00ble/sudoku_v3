@@ -65,20 +65,18 @@ class Box(NoRepeatsConstraint):
         super().__init__(board, [(i, j) for i in rows for j in cols])
 
 
-class GivenDigit(Constraint):
-
-    def __init__(self, board, row, column, value):
-        self.value = value
-        self.row = row
-        self.column = column
-        super().__init__(board, [(row, column)])
-
-    def add_contradictions(self):
-        pass
+class GermanWhisper(Constraint):
 
     def restrict_possibles(self):
-        for possible in DIGITS:
-            if possible != self.value:
-                index = self.board._possible_index(
-                    self.row, self.column, self.value)
-                self.board.possibles[index] = False
+        indices = [self.board._possible_index(
+            row, col, 5) for row, col in self.cells]
+        self.board._remove_possibles(indices)
+
+    def add_contradictions(self):
+        for (r1, c1), (r2, c2) in zip(self.cells[:-1], self.cells[1:]):
+            for d1, d2 in itertools.product(DIGITS, repeat=2):
+                if abs(d1 - d2) < 5:
+                    i1 = self.board._possible_index(r1, c1, d1)
+                    i2 = self.board._possible_index(r2, c2, d2)
+                    self.board.contradictions[i1].append(i2)
+                    self.board.contradictions[i2].append(i1)
