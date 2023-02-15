@@ -25,6 +25,8 @@ class Board:
         self.possibles = np.ones(9 * 9 * 9 + 1).astype(bool)
         self.possibles[-1] = False
         self.finalised = np.zeros(9 * 9 * 9).astype(bool)
+        self.unbifurcated_possibles = self.possibles
+        self.unbifurcated_finalised = self.finalised
         self.contradictions = collections.defaultdict(list)
         self.coveree_index = collections.defaultdict(list)
         self._coverees = []
@@ -93,7 +95,15 @@ class Board:
 
     def solve(self, with_terminal=False):
         if with_terminal:
-            self._init_screen()
+            curses.wrapper(self._solve)
+        else:
+            self._solve()
+
+        print(self)
+
+    def _solve(self, screen=None):
+        self.screen = screen
+        self._init_colors()
         self.solving = True
 
         self.finalise(self.get_singleton_coverees())
@@ -131,16 +141,21 @@ class Board:
         self.finalise([index])
 
     def _select_bifurcation_index(self):
-        return min(np.where(self.possibles[:-1] & ~self.finalised)[0])
+        # TODO with the following line on the german whispers example, why
+        # does it bifurcate on 1s in box 2 when there's a given 1 there?
+        # return min(np.where(self.possibles[:-1] & ~self.finalised)[0])
+        return max(np.where(self.possibles[:-1] & ~self.finalised)[0], key=lambda x: len(self.contradictions[x]))
 
     def _rewind_bifurcation(self, bifurcation):
         self.possibles = bifurcation.possibles
         self.finalised = bifurcation.finalised
 
-    def _init_screen(self):
-        curses.initscr()
+    def _init_colors(self):
+        if self.screen is None:
+            return
         curses.start_color()
-        self.screen = curses.newwin(WINDOW_HEIGHT, WINDOW_WIDTH, 0, 0)
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_RED, -1)
 
     def _refresh_screen(self):
         if self.screen is None:
@@ -161,7 +176,8 @@ class Board:
             column = index // 9 % 9
             cursor_column = 10 * column + 2 * (column // 3)
             digit = index % 9
-            self.screen.addstr(line_number, cursor_column, f"{digit}*")
+            self.screen.addstr(line_number, cursor_column,
+                               str(digit), curses.color_pair(1))
 
         self.screen.refresh()
 
@@ -194,6 +210,7 @@ class Board:
 
     def _remove_possibles(self, indices):
         self.possibles[indices] = False
+        self.finalised[indices] = True
         if not self.solving:
             return
         self.finalise(self.get_singleton_coverees())
