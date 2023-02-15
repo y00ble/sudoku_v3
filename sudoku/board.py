@@ -94,6 +94,9 @@ class Board:
         return output
 
     def solve(self, with_terminal=False):
+        # TODO detect multiple solutions
+        # TODO error handling for impossible puzzles
+        # TODO contradictions hypergraph
         if with_terminal:
             curses.wrapper(self._solve)
         else:
