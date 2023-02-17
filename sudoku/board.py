@@ -73,7 +73,7 @@ class Board:
         for digit in DIGITS:
             index = self._possible_index(row, column, digit)
             if digit not in value:
-                self._remove_possibles(index)
+                self._remove_possibles([index])
 
     def __str__(self):
         output = ""
@@ -118,6 +118,7 @@ class Board:
                     to_remove = None
                 else:
                     self._do_bifurcation()
+
             except SudokuContradiction:
                 self._refresh_screen()
                 failed_bifurcation = self.bifurcations.pop()
@@ -140,7 +141,9 @@ class Board:
     def _do_bifurcation(self):
         index = self._select_bifurcation_index()
         self.bifurcations.append(Bifurcation(
-            index, np.copy(self.possibles), np.copy(self.finalised)))
+            index, self.possibles, self.finalised))
+        self.possibles = np.copy(self.possibles)
+        self.finalised = np.copy(self.finalised)
         self.finalise([index])
 
     def _select_bifurcation_index(self):
@@ -159,31 +162,62 @@ class Board:
         curses.start_color()
         curses.use_default_colors()
         curses.init_pair(1, curses.COLOR_RED, -1)
+        curses.init_pair(4, curses.COLOR_GREEN, -1)
+        curses.init_pair(2, curses.COLOR_GREEN, -1)
+        curses.init_pair(3, 0, -1)
 
     def _refresh_screen(self):
         if self.screen is None:
             return
         if time.time() - self.last_frame_time < 1 / FRAME_RATE:
             return
+
         self.last_frame_time = time.time()
-
         self.screen.erase()
-        for i, line in enumerate(str(self).splitlines()):
-            self.screen.addstr(i, 0, line)
 
-        for bifurcation in self.bifurcations:
-            # TODO pull out into another function
-            index = bifurcation.index
-            row = index // 81
-            line_number = row + row // 3
-            column = index // 9 % 9
-            cursor_column = 10 * column + 2 * (column // 3)
-            digit = index % 9
-            # TODO more colors (probably highlight non-bifurcated stuff)
-            self.screen.addstr(line_number, cursor_column,
-                               str(digit), curses.color_pair(1))
+        for i in range(11):
+            self.screen.addstr(i, 0, " | ".join([" " * 29] * 3))
+
+        for i in [3, 7]:
+            self.screen.addstr(i, 0, "-" * ((9 * 9) + 6 + 2 * 3))
+
+        draw_coords = self._possibles_to_draw_coords(
+            self.unbifurcated_possibles)
+
+        bifurcation_indices = {
+            bifurcation.index for bifurcation in self.bifurcations}
+        for index in range(9 ** 3):
+            digit = str(index % 9 + 1)
+            coords = tuple(draw_coords[index])
+            if self.unbifurcated_possibles[index]:
+                self.screen.addstr(
+                    *coords, digit, curses.color_pair(3))
+
+            if self.possibles[index]:
+                self.screen.addstr(*coords, digit)
+                if self.unbifurcated_finalised[index]:
+                    self.screen.addstr(*coords, digit, curses.color_pair(4))
+
+            if index in bifurcation_indices:
+                self.screen.addstr(
+                    *coords, digit, curses.color_pair(1))
+
+            self.screen.refresh()  # TODO remove
 
         self.screen.refresh()
+
+    @staticmethod
+    def _possibles_to_draw_coords(possibles):
+        reshaped_possibles = possibles[:-1].reshape((81, 9))
+        index_offests = np.cumsum(reshaped_possibles, axis=1).reshape(9 ** 3)
+        cell_start_xs = ((np.arange(9 ** 3) // 9) % 9) * 10
+        cell_start_xs += 2 * (cell_start_xs >= 30) + 2 * (cell_start_xs >= 60)
+        x_pos = cell_start_xs + index_offests
+
+        y_pos = np.arange(9 ** 3) // 9 ** 2
+        y_pos += (y_pos >= 3).astype(int) + (y_pos >= 6).astype(int)
+
+        return np.stack([y_pos, x_pos]).T
 
     @ staticmethod
     def _cell_start_index(row, col):
