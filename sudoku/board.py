@@ -27,6 +27,8 @@ class Board:
         self.finalised = np.zeros(9 * 9 * 9).astype(bool)
         self.unbifurcated_possibles = self.possibles
         self.unbifurcated_finalised = self.finalised
+        self.successful_bifurcations = set()
+        self.solutions = set()
         self.contradictions = collections.defaultdict(list)
         self.coveree_index = collections.defaultdict(list)
         self._coverees = []
@@ -102,6 +104,8 @@ class Board:
         else:
             self._solve()
 
+        print("{} {} found!".format(len(self.solutions),
+              "solution" if len(self.solutions) == 1 else "solutions"))
         print(self)
 
     def _solve(self, screen=None):
@@ -111,19 +115,31 @@ class Board:
 
         self.finalise(self.get_singleton_coverees())
         to_remove = None
-        while not np.all(self.finalised):
+        while not np.all(self.finalised) or self.bifurcations:
             try:
                 if to_remove is not None:
                     self._remove_possibles([to_remove])
                     to_remove = None
-                else:
+                elif not np.all(self.finalised):
                     self._do_bifurcation()
+                else:
+                    self.successful_bifurcations.update((
+                        bifurcation.index for bifurcation in self.bifurcations
+                    ))
+                    self.solutions.add(tuple(self.possibles))
+                    while self.bifurcations:
+                        self._pop_bifurcation()
 
             except SudokuContradiction:
                 self._refresh_screen()
-                failed_bifurcation = self.bifurcations.pop()
-                self._rewind_bifurcation(failed_bifurcation)
-                to_remove = failed_bifurcation.index
+                popped = self._pop_bifurcation()
+                to_remove = popped.index
+
+    def _pop_bifurcation(self):
+        popped_bifurcation = self.bifurcations.pop()
+        self.possibles = popped_bifurcation.possibles
+        self.finalised = popped_bifurcation.finalised
+        return popped_bifurcation
 
     def finalise(self, indices):
         to_remove = []
@@ -147,24 +163,32 @@ class Board:
         self.finalise([index])
 
     def _select_bifurcation_index(self):
-        # TODO with the following line on the german whispers example, why
-        # does it bifurcate on 1s in box 2 when there's a given 1 there?
-        # return min(np.where(self.possibles[:-1] & ~self.finalised)[0])
-        return max(np.where(self.possibles[:-1] & ~self.finalised)[0], key=lambda x: len(self.contradictions[x]))
+        unfinalised = np.where(self.possibles[:-1] & ~self.finalised)[0]
+        unfinalised_and_unbifurcated = [
+            i for i in unfinalised if i not in self.successful_bifurcations]
+        return min(unfinalised_and_unbifurcated, key=self._count_contradictions)
 
-    def _rewind_bifurcation(self, bifurcation):
-        self.possibles = bifurcation.possibles
-        self.finalised = bifurcation.finalised
+    def _count_contradictions(self, index):
+        cell_index = index // 9
+        total_to_bifurcate = 0
+        possible_count = self.possibles.sum()
+        for i in range(9):
+            possible_index = 9 * cell_index + i
+            if self.possibles[possible_index]:
+                total_to_bifurcate += possible_count - \
+                    len(self.contradictions[possible_index])
+
+        return total_to_bifurcate, possible_count - len(self.contradictions[index])
 
     def _init_colors(self):
         if self.screen is None:
             return
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_RED, -1)
-        curses.init_pair(4, curses.COLOR_GREEN, -1)
-        curses.init_pair(2, curses.COLOR_GREEN, -1)
-        curses.init_pair(3, 0, -1)
+        curses.init_pair(1, 12, -1)  # Primary bifurcation
+        curses.init_pair(4, curses.COLOR_GREEN, -1)  # finalised
+        curses.init_pair(2, 88, -1)  # Non-primary bifurcation
+        curses.init_pair(3, 0, -1)  # Unbifurcated possible
 
     def _refresh_screen(self):
         if self.screen is None:
@@ -184,8 +208,8 @@ class Board:
         draw_coords = self._possibles_to_draw_coords(
             self.unbifurcated_possibles)
 
-        bifurcation_indices = {
-            bifurcation.index for bifurcation in self.bifurcations}
+        bifurcation_indices = [
+            bifurcation.index for bifurcation in self.bifurcations]
         for index in range(9 ** 3):
             digit = str(index % 9 + 1)
             coords = tuple(draw_coords[index])
@@ -199,10 +223,9 @@ class Board:
                     self.screen.addstr(*coords, digit, curses.color_pair(4))
 
             if index in bifurcation_indices:
+                first_bifurcation = index == bifurcation_indices[0]
                 self.screen.addstr(
-                    *coords, digit, curses.color_pair(1))
-
-            self.screen.refresh()  # TODO remove
+                    *coords, digit, curses.color_pair(1 if first_bifurcation else 2))
 
         self.screen.refresh()
 
