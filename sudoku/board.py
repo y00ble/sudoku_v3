@@ -1,7 +1,6 @@
 import collections
 import curses
 import itertools
-import random
 import time
 
 import numpy as np
@@ -22,16 +21,24 @@ Bifurcation = collections.namedtuple(
 class Board:
 
     def __init__(self):
-        self.possibles = np.ones(9 * 9 * 9 + 1).astype(bool)
+        self.possibles = np.ones(9 * 9 * 9 + 2).astype(bool)
         self.possibles[-1] = False
-        self.finalised = np.zeros(9 * 9 * 9).astype(bool)
+        self.possibles[-2] = True
+        self.finalised = np.zeros(9 * 9 * 9 + 2).astype(bool)
+        self.finalised[-1] = True
+        self.finalised[-2] = True
+
         self.unbifurcated_possibles = self.possibles
         self.unbifurcated_finalised = self.finalised
         self.successful_bifurcations = set()
         self.solutions = set()
-        self.contradictions = collections.defaultdict(list)
+
         self.coveree_index = collections.defaultdict(list)
-        self._coverees = []
+        self.coverees = []
+
+        self.contradiction_index = collections.defaultdict(list)
+        self.contradictions = []
+
         self.solving = False
         self.screen = None
         self.last_frame_time = 0
@@ -43,12 +50,12 @@ class Board:
                 for j in DIGITS:
                     indices = [self._possible_index(
                         *cell, j) for cell in constraint.cells]
-                    self._register_coveree(indices)
+                    self.add_coveree(indices)
 
         for row in DIGITS:
             for col in DIGITS:
                 indices = [self._possible_index(row, col, j) for j in DIGITS]
-                self._register_coveree(indices)
+                self.add_coveree(indices)
 
                 for d1, d2 in itertools.product(DIGITS, repeat=2):
                     if d1 == d2:
@@ -56,15 +63,7 @@ class Board:
 
                     i1 = self._possible_index(row, col, d1)
                     i2 = self._possible_index(row, col, d2)
-                    self.contradictions[i1].append(i2)
-                    self.contradictions[i2].append(i1)
-
-        self.coverees = []
-        for coveree in self._coverees:
-            self.coverees.append(
-                coveree + [-1] * (MAX_COVEREE_SIZE - len(coveree)))
-
-        self.coverees = np.array(self.coverees)
+                    self.add_contradiction(i1, i2)
 
     def __setitem__(self, key, value):
         if not isinstance(value, collections.abc.Iterable):
@@ -98,7 +97,6 @@ class Board:
     def solve(self, with_terminal=False):
         # TODO detect multiple solutions
         # TODO error handling for impossible puzzles
-        # TODO contradictions hypergraph
         if with_terminal:
             curses.wrapper(self._solve)
         else:
@@ -106,14 +104,17 @@ class Board:
 
         print("{} {} found!".format(len(self.solutions),
               "solution" if len(self.solutions) == 1 else "solutions"))
-        print(self)
 
     def _solve(self, screen=None):
         self.screen = screen
         self._init_colors()
         self.solving = True
 
-        self.finalise(self.get_singleton_coverees())
+        self._finalise_constraints()
+
+        to_finalise = self._get_singleton_coverees()
+        if len(to_finalise):
+            self.finalise(to_finalise)
         to_remove = None
         while not np.all(self.finalised) or self.bifurcations:
             try:
@@ -135,6 +136,22 @@ class Board:
                 popped = self._pop_bifurcation()
                 to_remove = popped.index
 
+        self.solutions.add(tuple(self.possibles))
+
+    def _finalise_constraints(self):
+        new_coverees = []
+        for coveree in self.coverees:
+            new_coverees.append(
+                coveree + [-1] * (MAX_COVEREE_SIZE - len(coveree)))
+        self.coverees = np.array(new_coverees)
+
+        new_contradictions = []
+        for contradiction in self.contradictions:
+            new_contradictions.append(
+                contradiction + [-2] * (MAX_COVEREE_SIZE - len(contradiction)))
+        self.contradictions = np.array(new_contradictions)
+        self.contradiction_counts = np.zeros(len(self.contradictions))
+
     def _pop_bifurcation(self):
         popped_bifurcation = self.bifurcations.pop()
         self.possibles = popped_bifurcation.possibles
@@ -142,14 +159,9 @@ class Board:
         return popped_bifurcation
 
     def finalise(self, indices):
-        to_remove = []
-        for index in indices:
-            if self.finalised[index]:
-                continue
-            to_remove.extend(self.contradictions[index])
-
         self.finalised[indices] = True
-        if to_remove:
+        to_remove = self._get_forced_contradictions()
+        if len(to_remove):
             self._remove_possibles(to_remove)
 
         self._refresh_screen()
@@ -163,22 +175,28 @@ class Board:
         self.finalise([index])
 
     def _select_bifurcation_index(self):
-        unfinalised = np.where(self.possibles[:-1] & ~self.finalised)[0]
+        unfinalised = np.where(self.possibles[:-2] & ~self.finalised[:-2])[0]
         unfinalised_and_unbifurcated = [
             i for i in unfinalised if i not in self.successful_bifurcations]
         return min(unfinalised_and_unbifurcated, key=self._count_contradictions)
 
+    # TODO coveree and contradiction masks if already satisfied
+    # TODO are simple criteria actually better or just faster? Count bifurcations.
     def _count_contradictions(self, index):
+        return 1 / self.contradiction_counts[self.contradiction_index[index]].sum()
         cell_index = index // 9
         total_to_bifurcate = 0
         possible_count = self.possibles.sum()
         for i in range(9):
             possible_index = 9 * cell_index + i
+            contradictions = self.contradictions[self.contradiction_index[possible_index]]
+
             if self.possibles[possible_index]:
                 total_to_bifurcate += possible_count - \
-                    len(self.contradictions[possible_index])
+                    self.possibles[list(
+                        self.contradictions[possible_index])].sum()
 
-        return total_to_bifurcate, possible_count - len(self.contradictions[index])
+        return total_to_bifurcate, possible_count - self.possibles[list(self.contradictions[possible_index])].sum()
 
     def _init_colors(self):
         if self.screen is None:
@@ -231,7 +249,7 @@ class Board:
 
     @staticmethod
     def _possibles_to_draw_coords(possibles):
-        reshaped_possibles = possibles[:-1].reshape((81, 9))
+        reshaped_possibles = possibles[:-2].reshape((81, 9))
         index_offests = np.cumsum(reshaped_possibles, axis=1).reshape(9 ** 3)
         cell_start_xs = ((np.arange(9 ** 3) // 9) % 9) * 10
         cell_start_xs += 2 * (cell_start_xs >= 30) + 2 * (cell_start_xs >= 60)
@@ -242,23 +260,23 @@ class Board:
 
         return np.stack([y_pos, x_pos]).T
 
-    @ staticmethod
+    @staticmethod
     def _cell_start_index(row, col):
         return (row - 1) * 81 + (col - 1) * 9
 
-    @ staticmethod
+    @staticmethod
     def _possible_index(row, col, possible):
         return Board._cell_start_index(row, col) + (possible - 1)
 
-    @ staticmethod
+    @staticmethod
     def _possible_index_to_cell_index(index):
         return index // 9
 
-    @ staticmethod
+    @staticmethod
     def _possible_index_to_digit(index):
         return index % 9 + 1
 
-    @ staticmethod
+    @staticmethod
     def _describe_cell_index(index):
         return f"R{index // 9 + 1}C{index % 9 + 1}"
 
@@ -274,9 +292,12 @@ class Board:
         self.finalised[indices] = True
         if not self.solving:
             return
-        self.finalise(self.get_singleton_coverees())
 
-    def get_singleton_coverees(self):
+        to_finalise = self._get_singleton_coverees()
+        if len(to_finalise):
+            self.finalise(to_finalise)
+
+    def _get_singleton_coverees(self):
         coveree_status = self.possibles[self.coverees]
         coveree_counts = coveree_status.sum(axis=1)
         singleton_coverees_idx = (coveree_counts == 1)
@@ -285,13 +306,38 @@ class Board:
                 "At least one coveree cannot be covered!")
         singleton_coverees = (self.coverees[singleton_coverees_idx] *
                               coveree_status[singleton_coverees_idx]).sum(axis=1)
-        return singleton_coverees
 
-    def _register_coveree(self, cell_indices):
+        unfinalised_singletons = singleton_coverees[~self.finalised[singleton_coverees]]
+        return unfinalised_singletons
+
+    def _get_forced_contradictions(self):
+        contradiction_status = 1 - (self.possibles[self.contradictions] *
+                                    self.finalised[self.contradictions])
+        self.contradiction_counts = contradiction_status.sum(axis=1)
+        forced_contradictions_idx = (
+            self.contradiction_counts == 1)
+        if np.any(self.contradiction_counts == 0):
+            raise SudokuContradiction(
+                "At least one contradiction has occurred!")
+        forced_contradictions = (self.contradictions[forced_contradictions_idx] *
+                                 contradiction_status[forced_contradictions_idx]).sum(axis=1)
+        return forced_contradictions
+
+    def add_coveree(self, cell_indices):
         if len(cell_indices) > MAX_COVEREE_SIZE:
             raise ValueError(
                 "Coveree is too large! Max coveree size is {}".format(MAX_COVEREE_SIZE))
-        index = len(self._coverees)
-        self._coverees.append(cell_indices)
+        index = len(self.coverees)
+        self.coverees.append(cell_indices)
         for cell in cell_indices:
             self.coveree_index[cell].append(index)
+
+    def add_contradiction(self, *args):
+        args = list(args)
+        if len(args) > MAX_COVEREE_SIZE:
+            raise ValueError(
+                "Contradiction is too large! Max contradiction size is {}".format(MAX_COVEREE_SIZE))
+        index = len(self.contradictions)
+        self.contradictions.append(args)
+        for cell in args:
+            self.contradiction_index[cell].append(index)

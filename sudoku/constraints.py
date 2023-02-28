@@ -38,8 +38,7 @@ class NoRepeatsConstraint(Constraint):
             for value in DIGITS:
                 i1 = self.board._possible_index(*c1, value)
                 i2 = self.board._possible_index(*c2, value)
-                self.board.contradictions[i1].append(i2)
-                self.board.contradictions[i2].append(i1)
+                self.board.add_contradiction(i1, i2)
 
     def restrict_possibles(self):
         pass
@@ -78,5 +77,4 @@ class GermanWhisper(Constraint):
                 if abs(d1 - d2) < 5:
                     i1 = self.board._possible_index(r1, c1, d1)
                     i2 = self.board._possible_index(r2, c2, d2)
-                    self.board.contradictions[i1].append(i2)
-                    self.board.contradictions[i2].append(i1)
+                    self.board.add_contradiction(i1, i2)
