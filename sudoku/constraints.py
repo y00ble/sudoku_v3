@@ -152,8 +152,6 @@ class MiniSandwich(IsValidConstraint):
         if len(summand_cells) != 4:
             raise ValueError("Must be exactly 4 summand cells")
         super().__init__(board, [sum_cell] + list(summand_cells))
-        board.prefered_bifurcations.add(
-            board._cell_start_index(*sum_cell) // 9)
 
     def initial_possibles(self):
         return [
@@ -174,6 +172,8 @@ class MiniSkyscraper(IsValidConstraint):
         if len(subject_cells) != 4:
             raise ValueError("Must be exactly 4 subject cells")
         super().__init__(board, [count_cell] + subject_cells)
+        self.board.prefered_bifurcations.add(
+            self.board._possible_index(*count_cell, 4))
 
     def initial_possibles(self):
         return [
@@ -201,6 +201,8 @@ class MiniConsecutiveRun(IsValidConstraint):
         if len(subject_cells) != 4:
             raise ValueError("Must be exactly 4 subject cells")
         super().__init__(board, [count_cell] + subject_cells)
+        self.board.prefered_bifurcations.add(
+            self.board._possible_index(*count_cell, 4))
 
     def initial_possibles(self):
         return [

@@ -144,7 +144,7 @@ class Board:
                 continue
             if i in self.successful_bifurcations:
                 continue
-            if prefered_only and i // 9 not in self.prefered_bifurcations:
+            if prefered_only and i not in self.prefered_bifurcations:
                 continue
             yield i
 
@@ -165,11 +165,19 @@ class Board:
                     self._remove_possibles([to_remove])
                     to_remove = None
                 elif not np.all(self.finalised):
-                    if not self.bifurcations:
-                        self._assess_bifurcations()
-                        if np.all(self.finalised):
+                    self._assess_bifurcations()
+                    if np.all(self.finalised):
+                        if not self.bifurcations:
                             self.solutions.add(tuple(self.possibles))
                             return
+                        else:
+                            self.successful_bifurcations.update((
+                                bifurcation.index for bifurcation in self.bifurcations
+                            ))
+                            self.solutions.add(tuple(self.possibles))
+                            while self.bifurcations:
+                                self._pop_bifurcation()
+                            continue
                     self.mode = "DEEP SCAN"
                     self._do_bifurcation(
                         self._select_bifurcation_index())
@@ -219,7 +227,6 @@ class Board:
         self._refresh_screen()
 
     def _do_bifurcation(self, index):
-        possibles_before = self.possibles.sum()
         self.bifurcations.append(Bifurcation(
             index, self.possibles, self.finalised))
         self.possibles = np.copy(self.possibles)
@@ -229,7 +236,7 @@ class Board:
     def _select_bifurcation_index(self):
         options = list(self.possible_bifurcations(True))
         if not options:
-            options = self.possible_bifurcations()
+            options = list(self.possible_bifurcations())
         return max(options, key=self.bifurcation_scores.get)
 
     def _init_colors(self):
