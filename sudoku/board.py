@@ -33,10 +33,8 @@ class Board:
         self.successful_bifurcations = set()
         self.solutions = set()
 
-        self.coveree_index = collections.defaultdict(list)
         self.coverees = []
 
-        self.contradiction_index = collections.defaultdict(list)
         self.contradictions = []
 
         self.solving = False
@@ -175,6 +173,27 @@ class Board:
         self.finalise([index])
 
     def _select_bifurcation_index(self):
+        possible_counts = self.possibles.sum()
+        pair_contradictions = self.contradictions[self.contradiction_counts == 2]
+        possibles, counts = np.unique(
+            pair_contradictions.reshape(-1), return_counts=True)
+        indexed_contradiction_counts = np.zeros(9 ** 3 + 2).astype(int)
+        indexed_contradiction_counts[possibles] = counts
+        indexed_contradiction_counts *= (self.possibles * ~self.finalised)
+        estimated_bifurcations = possible_counts - indexed_contradiction_counts
+        return np.argmin(estimated_bifurcations)
+
+        unfinalised_coverees = self.coverees[~np.any(
+            self.finalised[self.coverees] & self.possibles[self.coverees], axis=1)]
+        coveree_contradiction_status = estimated_bifurcations[unfinalised_coverees].sum(
+            axis=1)
+        selected_coveree_idx = np.argmin(coveree_contradiction_status)
+        selected_coveree = unfinalised_coverees[selected_coveree_idx]
+        possible_cells = selected_coveree[self.possibles[selected_coveree]]
+        selected_idx = np.argmin(
+            estimated_bifurcations[possible_cells])
+        return possible_cells[selected_idx]
+
         unfinalised = np.where(self.possibles[:-2] & ~self.finalised[:-2])[0]
         unfinalised_and_unbifurcated = [
             i for i in unfinalised if i not in self.successful_bifurcations]
@@ -329,8 +348,6 @@ class Board:
                 "Coveree is too large! Max coveree size is {}".format(MAX_COVEREE_SIZE))
         index = len(self.coverees)
         self.coverees.append(cell_indices)
-        for cell in cell_indices:
-            self.coveree_index[cell].append(index)
 
     def add_contradiction(self, *args):
         args = list(args)
@@ -339,5 +356,3 @@ class Board:
                 "Contradiction is too large! Max contradiction size is {}".format(MAX_COVEREE_SIZE))
         index = len(self.contradictions)
         self.contradictions.append(args)
-        for cell in args:
-            self.contradiction_index[cell].append(index)
