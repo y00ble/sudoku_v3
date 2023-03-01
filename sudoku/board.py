@@ -37,6 +37,9 @@ class Board:
 
         self.contradictions = []
 
+        self.bifurcation_counts = collections.defaultdict(int)
+        self.bifurcation_scores = collections.defaultdict(float)
+
         self.solving = False
         self.screen = None
         self.last_frame_time = 0
@@ -103,6 +106,37 @@ class Board:
         print("{} {} found!".format(len(self.solutions),
               "solution" if len(self.solutions) == 1 else "solutions"))
 
+    def _assess_bifurcations(self):
+        self.bifurcation_counts = collections.defaultdict(int)
+        self.bifurcation_scores = collections.defaultdict(float)
+        possibles_before = self.possibles.sum()
+        to_remove = []
+        for i in self.possible_bifurcations:
+            if self.possibles[i]:
+                try:
+                    self._do_bifurcation(i)
+                    possibles_after = self.possibles.sum()
+                    self.bifurcation_counts[i] += 1
+                    self.bifurcation_scores[i] += (possibles_before -
+                                                   possibles_after) / possibles_before
+                except SudokuContradiction:
+                    to_remove.append(i)
+                finally:
+                    self._pop_bifurcation()
+
+        self._remove_possibles(to_remove)
+
+    @property
+    def possible_bifurcations(self):
+        for i in range(9 ** 3):
+            if not self.possibles[i]:
+                continue
+            if self.finalised[i]:
+                continue
+            if i in self.successful_bifurcations:
+                continue
+            yield i
+
     def _solve(self, screen=None):
         self.screen = screen
         self._init_colors()
@@ -120,7 +154,13 @@ class Board:
                     self._remove_possibles([to_remove])
                     to_remove = None
                 elif not np.all(self.finalised):
-                    self._do_bifurcation()
+                    if not self.bifurcations:
+                        self._assess_bifurcations()
+                        if np.all(self.finalised):
+                            self.solutions.add(tuple(self.possibles))
+                            return
+                    self._do_bifurcation(
+                        self._select_bifurcation_index())
                 else:
                     self.successful_bifurcations.update((
                         bifurcation.index for bifurcation in self.bifurcations
@@ -164,8 +204,8 @@ class Board:
 
         self._refresh_screen()
 
-    def _do_bifurcation(self):
-        index = self._select_bifurcation_index()
+    def _do_bifurcation(self, index):
+        possibles_before = self.possibles.sum()
         self.bifurcations.append(Bifurcation(
             index, self.possibles, self.finalised))
         self.possibles = np.copy(self.possibles)
@@ -173,6 +213,7 @@ class Board:
         self.finalise([index])
 
     def _select_bifurcation_index(self):
+        return max(self.possible_bifurcations, key=lambda x: self.bifurcation_scores[x] / self.bifurcation_counts[x])
         possible_counts = self.possibles.sum()
         pair_contradictions = self.contradictions[self.contradiction_counts == 2]
         possibles, counts = np.unique(
