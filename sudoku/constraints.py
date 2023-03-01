@@ -78,3 +78,35 @@ class GermanWhisper(Constraint):
                     i1 = self.board._possible_index(r1, c1, d1)
                     i2 = self.board._possible_index(r2, c2, d2)
                     self.board.add_contradiction(i1, i2)
+
+
+class KillerCage(NoRepeatsConstraint):
+
+    def __init__(self, board, cells, total):
+        self.total = total
+        super().__init__(board, cells)
+
+    def add_contradictions(self):
+        super().add_contradictions()
+
+        contradictions = set()
+        for values in itertools.combinations(DIGITS, r=len(self.cells)):
+            values = sorted(values)
+            n = len(values)
+            for i in range(1, n+1):
+                remaining_at_least = sum([j + 1 for j in range(n - i)])
+                if sum(values[-i:]) + remaining_at_least > self.total:
+                    contradictions.add(tuple(values[-i:]))
+                    break
+
+            for i in range(1, n+1):
+                remaining_at_most = sum([10 - j for j in range(n - i)])
+                if sum(values[:i]) + remaining_at_most < self.total:
+                    contradictions.add(tuple(values[:i]))
+                    break
+
+        for contradiction in contradictions:
+            for cell_perm in itertools.permutations(self.cells, len(contradiction)):
+                indices = [self.board._possible_index(
+                    *cell, digit) for cell, digit in zip(cell_perm, contradiction)]
+                self.board.add_contradiction(*indices)
