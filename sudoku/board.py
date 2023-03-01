@@ -33,17 +33,18 @@ class Board:
         self.successful_bifurcations = set()
         self.solutions = set()
 
+        self.prefered_bifurcations = set()
         self.coverees = []
 
         self.contradictions = []
 
-        self.bifurcation_counts = collections.defaultdict(int)
         self.bifurcation_scores = collections.defaultdict(float)
 
         self.solving = False
         self.screen = None
         self.last_frame_time = 0
         self.bifurcations = []
+        self.mode = "BASIC DEDUCTION"
 
         for i in DIGITS:
             for constraint_cls in [Row, Column, Box]:
@@ -78,11 +79,14 @@ class Board:
                 self._remove_possibles([index])
 
     def __str__(self):
+        return self.simple_draw(self.possibles)
+
+    def simple_draw(self, state):
         output = ""
         for row in DIGITS:
             for col in DIGITS:
                 possibles = [
-                    str(i) for i in DIGITS if self.possibles[self._possible_index(row, col, i)]]
+                    str(i) for i in DIGITS if state[self._possible_index(row, col, i)]]
                 output += "".join(possibles).ljust(len(DIGITS))
                 if col in {3, 6}:
                     output += " | "
@@ -105,35 +109,42 @@ class Board:
 
         print("{} {} found!".format(len(self.solutions),
               "solution" if len(self.solutions) == 1 else "solutions"))
+        for i, solution in enumerate(self.solutions):
+            print(f"SOLUTION {i}".center(30, "-"))
+            print(self.simple_draw(solution))
 
     def _assess_bifurcations(self):
-        self.bifurcation_counts = collections.defaultdict(int)
-        self.bifurcation_scores = collections.defaultdict(float)
-        possibles_before = self.possibles.sum()
-        to_remove = []
-        for i in self.possible_bifurcations:
-            if self.possibles[i]:
-                try:
-                    self._do_bifurcation(i)
-                    possibles_after = self.possibles.sum()
-                    self.bifurcation_counts[i] += 1
-                    self.bifurcation_scores[i] += (possibles_before -
-                                                   possibles_after) / possibles_before
-                except SudokuContradiction:
-                    to_remove.append(i)
-                finally:
-                    self._pop_bifurcation()
+        self.mode = "SHALLOW SCAN"
+        to_remove = None
+        while to_remove is None or to_remove:
+            if to_remove:
+                self._remove_possibles(to_remove)
 
-        self._remove_possibles(to_remove)
+            to_remove = []
+            self.bifurcation_scores = collections.defaultdict(float)
+            possibles_before = self.possibles.sum()
 
-    @property
-    def possible_bifurcations(self):
+            for i in self.possible_bifurcations():
+                if self.possibles[i]:
+                    try:
+                        self._do_bifurcation(i)
+                        possibles_after = self.possibles.sum()
+                        self.bifurcation_scores[i] += (possibles_before -
+                                                       possibles_after) / possibles_before
+                    except SudokuContradiction:
+                        to_remove.append(i)
+                    finally:
+                        self._pop_bifurcation()
+
+    def possible_bifurcations(self, prefered_only=False):
         for i in range(9 ** 3):
             if not self.possibles[i]:
                 continue
             if self.finalised[i]:
                 continue
             if i in self.successful_bifurcations:
+                continue
+            if prefered_only and i // 9 not in self.prefered_bifurcations:
                 continue
             yield i
 
@@ -159,6 +170,7 @@ class Board:
                         if np.all(self.finalised):
                             self.solutions.add(tuple(self.possibles))
                             return
+                    self.mode = "DEEP SCAN"
                     self._do_bifurcation(
                         self._select_bifurcation_index())
                 else:
@@ -170,6 +182,8 @@ class Board:
                         self._pop_bifurcation()
 
             except SudokuContradiction:
+                if not self.bifurcations:
+                    raise
                 self._refresh_screen()
                 popped = self._pop_bifurcation()
                 to_remove = popped.index
@@ -213,50 +227,10 @@ class Board:
         self.finalise([index])
 
     def _select_bifurcation_index(self):
-        return max(self.possible_bifurcations, key=lambda x: self.bifurcation_scores[x] / self.bifurcation_counts[x])
-        possible_counts = self.possibles.sum()
-        pair_contradictions = self.contradictions[self.contradiction_counts == 2]
-        possibles, counts = np.unique(
-            pair_contradictions.reshape(-1), return_counts=True)
-        indexed_contradiction_counts = np.zeros(9 ** 3 + 2).astype(int)
-        indexed_contradiction_counts[possibles] = counts
-        indexed_contradiction_counts *= (self.possibles * ~self.finalised)
-        estimated_bifurcations = possible_counts - indexed_contradiction_counts
-        return np.argmin(estimated_bifurcations)
-
-        unfinalised_coverees = self.coverees[~np.any(
-            self.finalised[self.coverees] & self.possibles[self.coverees], axis=1)]
-        coveree_contradiction_status = estimated_bifurcations[unfinalised_coverees].sum(
-            axis=1)
-        selected_coveree_idx = np.argmin(coveree_contradiction_status)
-        selected_coveree = unfinalised_coverees[selected_coveree_idx]
-        possible_cells = selected_coveree[self.possibles[selected_coveree]]
-        selected_idx = np.argmin(
-            estimated_bifurcations[possible_cells])
-        return possible_cells[selected_idx]
-
-        unfinalised = np.where(self.possibles[:-2] & ~self.finalised[:-2])[0]
-        unfinalised_and_unbifurcated = [
-            i for i in unfinalised if i not in self.successful_bifurcations]
-        return min(unfinalised_and_unbifurcated, key=self._count_contradictions)
-
-    # TODO coveree and contradiction masks if already satisfied
-    # TODO are simple criteria actually better or just faster? Count bifurcations.
-    def _count_contradictions(self, index):
-        return 1 / self.contradiction_counts[self.contradiction_index[index]].sum()
-        cell_index = index // 9
-        total_to_bifurcate = 0
-        possible_count = self.possibles.sum()
-        for i in range(9):
-            possible_index = 9 * cell_index + i
-            contradictions = self.contradictions[self.contradiction_index[possible_index]]
-
-            if self.possibles[possible_index]:
-                total_to_bifurcate += possible_count - \
-                    self.possibles[list(
-                        self.contradictions[possible_index])].sum()
-
-        return total_to_bifurcate, possible_count - self.possibles[list(self.contradictions[possible_index])].sum()
+        options = list(self.possible_bifurcations(True))
+        if not options:
+            options = self.possible_bifurcations()
+        return max(options, key=self.bifurcation_scores.get)
 
     def _init_colors(self):
         if self.screen is None:
@@ -277,11 +251,14 @@ class Board:
         self.last_frame_time = time.time()
         self.screen.erase()
 
+        self.screen.addstr(0, 0, self.mode.upper().center(
+            (9 * 9) + 6 + 2 * 3, "="))
+
         for i in range(11):
-            self.screen.addstr(i, 0, " | ".join([" " * 29] * 3))
+            self.screen.addstr(i + 1, 0, " | ".join([" " * 29] * 3))
 
         for i in [3, 7]:
-            self.screen.addstr(i, 0, "-" * ((9 * 9) + 6 + 2 * 3))
+            self.screen.addstr(i + 1, 0, "-" * ((9 * 9) + 6 + 2 * 3))
 
         draw_coords = self._possibles_to_draw_coords(
             self.unbifurcated_possibles)
@@ -313,12 +290,12 @@ class Board:
         index_offests = np.cumsum(reshaped_possibles, axis=1).reshape(9 ** 3)
         cell_start_xs = ((np.arange(9 ** 3) // 9) % 9) * 10
         cell_start_xs += 2 * (cell_start_xs >= 30) + 2 * (cell_start_xs >= 60)
-        x_pos = cell_start_xs + index_offests
+        x_pos = cell_start_xs + index_offests - 1
 
         y_pos = np.arange(9 ** 3) // 9 ** 2
         y_pos += (y_pos >= 3).astype(int) + (y_pos >= 6).astype(int)
 
-        return np.stack([y_pos, x_pos]).T
+        return np.stack([y_pos + 1, x_pos]).T
 
     @staticmethod
     def _cell_start_index(row, col):
