@@ -40,6 +40,6 @@ GermanWhisper(board, [(7, 7), (6, 8), (7, 9)])
 GermanWhisper(board, [(7, 8), (8, 8)])
 
 # board[7, 4] = 7
-board.prefered_bifurcations.extend(
-    board._cell_start_index(7, 4), board._cell_start_index(7, 4) + 9)
+board.prefered_bifurcations.update(range(
+    board._cell_start_index(7, 4), board._cell_start_index(7, 4) + 9))
 board.solve(with_terminal=True)
