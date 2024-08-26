@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from sudoku.board import Board
 
 board = Board()
@@ -24,7 +26,23 @@ try:
     board.solve(with_terminal=True)
 finally:
     print(board)
-# try:
-#     board.solve()
-# finally:
-#     print(board)
+
+
+grouped_by_circle_pattern = defaultdict(list)
+for solution_idx, solution in enumerate(board.solutions):
+    circle_cells = []
+    for row in range(3, 8):
+        for col in range(3, 8):
+            circle = False
+            for digit in range(5, 9):
+                index = board.possible_index(row, col, digit)
+                if solution[index]:
+                    circle = True
+
+            if circle:
+                circle_cells.append((row, col))
+    grouped_by_circle_pattern[tuple(circle_cells)].append(solution_idx)
+
+print("Solutions grouped by circle pattern:")
+for pattern, indices in grouped_by_circle_pattern.items():
+    print(indices, ":", pattern)

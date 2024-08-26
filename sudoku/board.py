@@ -1,6 +1,7 @@
 import collections
 import curses
 import itertools
+import logging
 import time
 
 import numpy as np
@@ -16,6 +17,15 @@ FRAME_RATE = 1
 
 Bifurcation = collections.namedtuple("Bifurcation", "index possibles finalised")
 
+logging.basicConfig(
+    filename="solve.log",
+    filemode="w",
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+    level=logging.DEBUG,
+)
+_file_logger = logging.getLogger(__name__)
+
 
 class Board:
 
@@ -30,7 +40,7 @@ class Board:
         # Indices that have been seen in at least one valid solution -
         # deprioritise these for bifurcation, but can't completely discount them
         # if trying to enumerate all solutions.
-        self.in_valid_solutions = set()
+        self.in_valid_solutions = np.zeros(9 * 9 * 9 + 2)
 
         self.unbifurcated_possibles = self.possibles
         self.unbifurcated_finalised = self.finalised
@@ -146,6 +156,7 @@ class Board:
                         self.bifurcation_scores[i] += (
                             possibles_before - possibles_after
                         ) / possibles_before
+                        self.bifurcation_scores[i] -= self.in_valid_solutions[i]
                     except SudokuContradiction:
                         to_remove.append(i)
                     finally:
@@ -183,14 +194,14 @@ class Board:
                     self._assess_bifurcations()
                     if np.all(self.finalised):
                         if not self.bifurcations:
-                            self.solutions.add(tuple(self.possibles))
+                            self._add_solution()
                             return
                         else:
                             self.successful_bifurcations.update(
                                 bifurcation.index
                                 for bifurcation in self.bifurcations
                             )
-                            self.solutions.add(tuple(self.possibles))
+                            self._add_solution()
                             while self.bifurcations:
                                 self._pop_bifurcation()
                             continue
@@ -206,12 +217,26 @@ class Board:
                             while self.bifurcations:
                                 self._pop_bifurcation()
                     else:
+                        cell_idx = self.possible_index_to_cell_index(
+                            bifurcation_index
+                        )
+                        row_idx = cell_idx // 9
+                        col_idx = cell_idx % 9
+                        digit = self.possible_index_to_digit(bifurcation_index)
+                        _file_logger.info(
+                            "%sBifurcating (level %d) on R%sC%s = %d",
+                            " " * len(self.bifurcations),
+                            len(self.bifurcations) + 1,
+                            row_idx,
+                            col_idx,
+                            digit,
+                        )
                         self._do_bifurcation(bifurcation_index)
                 else:
                     self.successful_bifurcations.update(
                         bifurcation.index for bifurcation in self.bifurcations
                     )
-                    self.solutions.add(tuple(self.possibles))
+                    self._add_solution()
                     while self.bifurcations:
                         self._pop_bifurcation()
 
@@ -222,6 +247,13 @@ class Board:
                 popped = self._pop_bifurcation()
                 to_remove = popped.index
 
+        self._add_solution()
+
+    def _add_solution(self):
+        self.in_valid_solutions = np.logical_or(
+            self.in_valid_solutions, self.possibles
+        )
+        _file_logger.info("%sSolution found!", " " * len(self.bifurcations))
         self.solutions.add(tuple(self.possibles))
 
     def _finalise_constraints(self):
@@ -277,7 +309,10 @@ class Board:
         curses.start_color()
         curses.use_default_colors()
         curses.init_pair(1, 12, -1)  # Primary bifurcation
-        curses.init_pair(4, curses.COLOR_GREEN, -1)  # finalised
+        curses.init_pair(4, 28, -1)  # in a valid solution
+        curses.init_pair(
+            5, 72, -1
+        )  # in a valid solution, but not on bifurcation
         curses.init_pair(2, 88, -1)  # Non-primary bifurcation
         curses.init_pair(3, 0, -1)  # Unbifurcated possible
 
@@ -316,11 +351,17 @@ class Board:
             digit = str(index % 9 + 1)
             coords = tuple(draw_coords[index])
             if self.unbifurcated_possibles[index]:
-                self.screen.addstr(*coords, digit, curses.color_pair(3))
+                self.screen.addstr(
+                    *coords,
+                    digit,
+                    curses.color_pair(
+                        5 if self.in_valid_solutions[index] else 3
+                    ),
+                )
 
             if self.possibles[index]:
                 self.screen.addstr(*coords, digit)
-                if self.unbifurcated_finalised[index]:
+                if self.in_valid_solutions[index]:
                     self.screen.addstr(*coords, digit, curses.color_pair(4))
 
             if index in bifurcation_indices:
@@ -374,6 +415,11 @@ class Board:
         )
 
     def _remove_possibles(self, indices):
+        _file_logger.info(
+            "%sRemoving %s",
+            " " * len(self.bifurcations),
+            ",".join(map(str, indices)),
+        )
         self.possibles[indices] = False
         self.finalised[indices] = True
         if not self.solving:
