@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import collections
 import curses
 import itertools
@@ -22,7 +24,7 @@ logging.basicConfig(
     filemode="w",
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
-    level=logging.DEBUG,
+    level=logging.ERROR,
 )
 _file_logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class Board:
 
         self.unbifurcated_possibles = self.possibles
         self.unbifurcated_finalised = self.finalised
-        self.successful_bifurcations = set()
+        self.attempted_bifurcations = set()
         self.solutions = set()
 
         self.prefered_bifurcations = set()
@@ -139,36 +141,22 @@ class Board:
             print(self.simple_draw(solution))
 
     def _assess_bifurcations(self):
-        to_remove = None
-        while to_remove is None or to_remove:
-            if to_remove:
-                self._remove_possibles(to_remove)
+        self.bifurcation_scores = collections.defaultdict(float)
+        possibles_by_cell = np.reshape(self.possibles[:-2], (81, -1))
+        cell_totals = np.sum(possibles_by_cell, axis=1)
 
-            to_remove = []
-            self.bifurcation_scores = collections.defaultdict(float)
-            possibles_before = self.possibles.sum()
-
-            for i in self.possible_bifurcations():
-                if self.possibles[i]:
-                    try:
-                        self._do_bifurcation(i)
-                        possibles_after = self.possibles.sum()
-                        self.bifurcation_scores[i] += (
-                            possibles_before - possibles_after
-                        ) / possibles_before
-                        self.bifurcation_scores[i] -= self.in_valid_solutions[i]
-                    except SudokuContradiction:
-                        to_remove.append(i)
-                    finally:
-                        self._pop_bifurcation()
+        for i in range(9**3):
+            self.bifurcation_scores[i] = 1 / cell_totals[i // 9]
 
     def possible_bifurcations(self, prefered_only=False):
+        current_bifurcations = self.sorted_bifurcation_indices
         for i in range(9**3):
             if not self.possibles[i]:
                 continue
             if self.finalised[i]:
                 continue
-            if i in self.successful_bifurcations:
+            new_sorted_bifurcations = tuple(sorted((*current_bifurcations, i)))
+            if new_sorted_bifurcations in self.attempted_bifurcations:
                 continue
             if prefered_only and i not in self.prefered_bifurcations:
                 continue
@@ -197,10 +185,6 @@ class Board:
                             self._add_solution()
                             return
                         else:
-                            self.successful_bifurcations.update(
-                                bifurcation.index
-                                for bifurcation in self.bifurcations
-                            )
                             self._add_solution()
                             while self.bifurcations:
                                 self._pop_bifurcation()
@@ -210,10 +194,6 @@ class Board:
                         if not self.bifurcations:
                             return
                         else:
-                            self.successful_bifurcations.update(
-                                bifurcation.index
-                                for bifurcation in self.bifurcations
-                            )
                             while self.bifurcations:
                                 self._pop_bifurcation()
                     else:
@@ -233,9 +213,6 @@ class Board:
                         )
                         self._do_bifurcation(bifurcation_index)
                 else:
-                    self.successful_bifurcations.update(
-                        bifurcation.index for bifurcation in self.bifurcations
-                    )
                     self._add_solution()
                     while self.bifurcations:
                         self._pop_bifurcation()
@@ -286,10 +263,17 @@ class Board:
 
         self._refresh_screen()
 
+    @property
+    def sorted_bifurcation_indices(self) -> tuple[int]:
+        return tuple(
+            sorted(bifurcation.index for bifurcation in self.bifurcations)
+        )
+
     def _do_bifurcation(self, index):
         self.bifurcations.append(
             Bifurcation(index, self.possibles, self.finalised)
         )
+        self.attempted_bifurcations.add(self.sorted_bifurcation_indices)
         self.possibles = np.copy(self.possibles)
         self.finalised = np.copy(self.finalised)
         self.finalise([index])
@@ -481,4 +465,5 @@ class Board:
                 )
             )
         index = len(self.contradictions)
+        self.contradictions.append(args)
         self.contradictions.append(args)

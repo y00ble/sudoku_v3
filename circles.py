@@ -31,7 +31,7 @@ board[1, 7] = 4
 
 NoX(board)
 
-board.solve(with_terminal=False)
+board.solve(with_terminal=True)
 
 grouped_by_circle_pattern = defaultdict(list)
 for solution_idx, solution in enumerate(board.solutions):
