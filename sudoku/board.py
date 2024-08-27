@@ -9,7 +9,7 @@ import time
 import numpy as np
 
 from .constraints import DIGITS, Box, Column, Row
-from .exceptions import SudokuContradiction
+from .exceptions import NoBifurcations, SudokuContradiction
 
 MAX_COVEREE_SIZE = 9
 
@@ -141,12 +141,25 @@ class Board:
             print(self.simple_draw(solution))
 
     def _assess_bifurcations(self):
-        self.bifurcation_scores = collections.defaultdict(float)
-        possibles_by_cell = np.reshape(self.possibles[:-2], (81, -1))
-        cell_totals = np.sum(possibles_by_cell, axis=1)
+        pass
+        # self.bifurcation_scores = collections.defaultdict(float)
+        # possibles_by_cell = np.reshape(self.possibles[:-2], (81, -1))
+        # cell_totals = np.sum(possibles_by_cell, axis=1)
 
-        for i in range(9**3):
-            self.bifurcation_scores[i] = 1 / cell_totals[i // 9]
+        # contradiction_status = 1 - (
+        #     self.possibles[self.contradictions]
+        #     * self.finalised[self.contradictions]
+        # )
+        # remaining_contradiction_outs = contradiction_status.sum(axis=1)
+
+        # for i in range(9**3):
+
+        #     # contains_i = (self.contradictions == i).sum(axis=1)
+        #     # self.bifurcation_scores[i] = contains_i.sum()
+        #     # self.bifurcation_scores[i] = (
+        #     #     (remaining_contradiction_outs - contains_i) == 1
+        #     # ).sum()
+        #     self.bifurcation_scores[i] = cell_totals[i // 9]
 
     def possible_bifurcations(self, prefered_only=False):
         current_bifurcations = self.sorted_bifurcation_indices
@@ -180,43 +193,20 @@ class Board:
                     to_remove = None
                 elif not np.all(self.finalised):
                     self._assess_bifurcations()
-                    if np.all(self.finalised):
-                        if not self.bifurcations:
-                            self._add_solution()
-                            return
-                        else:
-                            self._add_solution()
-                            while self.bifurcations:
-                                self._pop_bifurcation()
-                            continue
                     bifurcation_index = self._select_bifurcation_index()
                     if bifurcation_index is None:
+                        # All bifurcations already tried, and led to solutions
+                        # Erroneous bifurcations should've been removed by now.
                         if not self.bifurcations:
                             return
-                        else:
-                            while self.bifurcations:
-                                self._pop_bifurcation()
-                    else:
-                        cell_idx = self.possible_index_to_cell_index(
-                            bifurcation_index
-                        )
-                        row_idx = cell_idx // 9
-                        col_idx = cell_idx % 9
-                        digit = self.possible_index_to_digit(bifurcation_index)
-                        _file_logger.info(
-                            "%sBifurcating (level %d) on R%sC%s = %d",
-                            " " * len(self.bifurcations),
-                            len(self.bifurcations) + 1,
-                            row_idx,
-                            col_idx,
-                            digit,
-                        )
-                        self._do_bifurcation(bifurcation_index)
+
+                        self._pop_bifurcation()
+                        continue
+
+                    self._do_bifurcation(bifurcation_index)
                 else:
                     self._add_solution()
-                    while self.bifurcations:
-                        self._pop_bifurcation()
-
+                    self._pop_bifurcation()
             except SudokuContradiction:
                 if not self.bifurcations:
                     raise
@@ -247,7 +237,14 @@ class Board:
                 contradiction + [-2] * (MAX_COVEREE_SIZE - len(contradiction))
             )
         self.contradictions = np.array(new_contradictions)
-        self.contradiction_counts = np.zeros(len(self.contradictions))
+
+        contradiction_sizes = (self.contradictions != -2).sum(axis=1)
+        for i in range(9**3):
+            contains_i = (self.contradictions == i).sum(axis=1)
+            self.bifurcation_scores[i] = (
+                contains_i / contradiction_sizes
+            ).sum()
+            # self.bifurcation_scores[i] = i // 9
 
     def _pop_bifurcation(self):
         popped_bifurcation = self.bifurcations.pop()
@@ -270,6 +267,16 @@ class Board:
         )
 
     def _do_bifurcation(self, index):
+        # Debug
+        cell_idx = self.possible_index_to_cell_index(index)
+        row = cell_idx // 9 + 1
+        col = cell_idx % 9 + 1
+        digit = self.possible_index_to_digit(index)
+        if (row, col) in {(5, 2), (5, 9), (6, 1), (6, 9), (7, 1), (7, 2)}:
+            if digit in {3, 5}:
+                self._refresh_screen()
+                a = 0
+        # End debug
         self.bifurcations.append(
             Bifurcation(index, self.possibles, self.finalised)
         )
@@ -430,16 +437,20 @@ class Board:
         return unfinalised_singletons
 
     def _get_forced_contradictions(self):
+        # 1 if an index can still be flipped to prevent a contradiction
+        # 0 if that index is already finalised
         contradiction_status = 1 - (
             self.possibles[self.contradictions]
             * self.finalised[self.contradictions]
         )
-        self.contradiction_counts = contradiction_status.sum(axis=1)
-        forced_contradictions_idx = self.contradiction_counts == 1
-        if np.any(self.contradiction_counts == 0):
+        remaining_contradiction_outs = contradiction_status.sum(axis=1)
+        forced_contradictions_idx = remaining_contradiction_outs == 1
+        if np.any(remaining_contradiction_outs == 0):
             raise SudokuContradiction(
                 "At least one contradiction has occurred!"
             )
+        # Select the singleton indices that can still be flipped to prevent
+        # contradictions.
         forced_contradictions = (
             self.contradictions[forced_contradictions_idx]
             * contradiction_status[forced_contradictions_idx]
@@ -465,5 +476,4 @@ class Board:
                 )
             )
         index = len(self.contradictions)
-        self.contradictions.append(args)
         self.contradictions.append(args)
