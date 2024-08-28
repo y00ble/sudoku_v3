@@ -22,12 +22,17 @@ board[9, 2] = 8
 GivenPossibles(board, (9, 8), (2, 3))
 board[9, 9] = 1
 
-board[1, 3] = 5
-board[1, 4] = 6
-board[1, 5] = 2
-board[1, 6] = 3
-board[1, 7] = 4
+# board[1, 3] = 5
+# board[1, 4] = 6
+# board[1, 5] = 2
+# board[1, 6] = 3
+# board[1, 7] = 4
 # board[7, 6] = 6
+
+# Debugging coveree bifurcation
+# board[3, 4] = 1
+# board[4, 5] = 5
+# board[9, 4] = 7
 
 NoX(board)
 
