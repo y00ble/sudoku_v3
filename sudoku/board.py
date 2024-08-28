@@ -22,7 +22,9 @@ WINDOW_WIDTH = 9 * 9 + 6 + 2 * 3 + 1
 WINDOW_HEIGHT = 9 + 2
 FRAME_RATE = 1
 
-Bifurcation = collections.namedtuple("Bifurcation", "index possibles finalised")
+Bifurcation = collections.namedtuple(
+    "Bifurcation", "index possibles finalised pivot_coveree"
+)
 
 logging.basicConfig(
     filename="solve.log",
@@ -59,6 +61,7 @@ class Board:
 
         self.prefered_bifurcations = set()
         self.coverees = []
+        self.pivot_coveree = None
 
         self.contradictions = []
 
@@ -253,6 +256,7 @@ class Board:
         popped_bifurcation = self.bifurcations.pop()
         self.possibles = popped_bifurcation.possibles
         self.finalised = popped_bifurcation.finalised
+        self.pivot_coveree = popped_bifurcation.pivot_coveree
         return popped_bifurcation
 
     def finalise(self, indices):
@@ -292,13 +296,25 @@ class Board:
                 a = 0
         # End debug
         self.bifurcations.append(
-            Bifurcation(index, self.possibles, self.finalised)
+            Bifurcation(
+                index, self.possibles, self.finalised, self.pivot_coveree
+            )
         )
         self.possibles = np.copy(self.possibles)
         self.finalised = np.copy(self.finalised)
+        self.pivot_coveree = None
         self.finalise([index])
 
     def _select_bifurcation_index(self):
+        if self.pivot_coveree is not None:
+            try:
+                output = next(self.pivot_coveree)
+            except StopIteration:
+                return None
+
+            if not self.finalised[output]:
+                return output
+
         options = list(self.possible_bifurcations(True))
         if not options:
             options = list(self.possible_bifurcations())
@@ -311,9 +327,10 @@ class Board:
         )
         coveree_lengths = (live_coverees != COVEREE_FILL).sum(axis=1)
         min_coveree_length = coveree_lengths.min()
-        min_coveree_indices = np.unique(
-            live_coverees[coveree_lengths == min_coveree_length]
-        )
+        min_length_coverees = live_coverees[
+            coveree_lengths == min_coveree_length
+        ]
+        min_coveree_indices = np.unique(min_length_coverees)
 
         live_contradictions = self._live_contradictions()
         contradiction_counts = dict(
@@ -323,7 +340,14 @@ class Board:
             k: contradiction_counts.get(k, 0) for k in min_coveree_indices
         }
 
-        return max(options, key=lambda x: bifurcation_scores.get(x, 0))
+        coveree_scores = np.vectorize(bifurcation_scores.__getitem__)(
+            min_length_coverees
+        ).sum(axis=1)
+        selected_coveree = min_length_coverees[np.argmax(coveree_scores)]
+        self.pivot_coveree = iter(
+            [i for i in selected_coveree if i != COVEREE_FILL]
+        )
+        return next(self.pivot_coveree)
 
     def _init_colors(self):
         if self.screen is None:
